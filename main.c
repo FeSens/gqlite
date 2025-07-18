@@ -1,0 +1,70 @@
+#include "graphdb.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+// Example usage
+int main() {
+    GraphDB* gdb = graphdb_open("./graphdb");
+    if (!gdb) return 1;
+    graphdb_add_node(gdb, "node1", "Person");
+    graphdb_add_node(gdb, "node2", "Person");
+    graphdb_add_node(gdb, "node3", "Person");
+    graphdb_add_node(gdb, "node4", "Person");
+    graphdb_add_node(gdb, "node5", "Person");
+    graphdb_add_node(gdb, "node5", "Person");
+
+
+    graphdb_add_edge(gdb, "node1", "node2", "FRIEND");
+    graphdb_add_edge(gdb, "node2", "node3", "FRIEND");
+    graphdb_add_edge(gdb, "node3", "node4", "FRIEND");
+    graphdb_add_edge(gdb, "node4", "node5", "FRIEND");
+
+    graphdb_add_edge(gdb, "node1", "node3", "FRIEND");
+
+    int count;
+    char** neighbors = graphdb_get_outgoing(gdb, "node1", "FRIEND", &count);
+    if (neighbors) {
+        for (int i = 0; i < count; i++) {
+            printf("Neighbor: %s\n", neighbors[i]);
+            free(neighbors[i]);
+        }
+        free(neighbors);
+    }
+
+    // Find shortest path from node1 to node5
+    find_shortest_path(gdb, "node1", "node5", "FRIEND");
+
+    // Example of new API usage
+    char* label = graphdb_get_node_label(gdb, "node1");
+    if (label) {
+        printf("Label of node1: %s\n", label);
+        free(label);
+    }
+
+    int inc_count;
+    char** inc_neighbors = graphdb_get_incoming(gdb, "node3", "FRIEND", &inc_count);
+    if (inc_neighbors) {
+        printf("Incoming to node3:\n");
+        for (int i = 0; i < inc_count; i++) {
+            printf("%s\n", inc_neighbors[i]);
+            free(inc_neighbors[i]);
+        }
+        free(inc_neighbors);
+    }
+
+    // Basic Cypher example
+    graphdb_execute_basic_cypher(gdb, "MATCH (a)-[:FRIEND]->(b) WHERE a.id = 'node1' RETURN b.id");
+
+    // Delete edge example
+    graphdb_delete_edge(gdb, "node1", "node3", "FRIEND");
+
+    // Shortest path after deletion
+    find_shortest_path(gdb, "node1", "node5", "FRIEND");
+
+    // Restore the edge for consistency
+    graphdb_add_edge(gdb, "node1", "node3", "FRIEND");
+
+    graphdb_close(gdb);
+    return 0;
+}

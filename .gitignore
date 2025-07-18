@@ -1,0 +1,6 @@
+benchmarkdb/
+graphdb/
+*.o
+graph
+benchmark
+.DS_Store
