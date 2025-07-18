@@ -5,7 +5,7 @@
 #include <time.h>
 
 int main() {
-    srand(time(NULL));
+    srand(42);
 
     GraphDB* gdb = graphdb_open("./benchmarkdb");
     if (!gdb) return 1;

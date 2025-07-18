@@ -111,6 +111,57 @@ void test_execute_cypher_with_filter_and_return(void) {
     free_cypher_result(res);
 }
 
+void test_create_node(void) {
+    CypherResult* res = execute_cypher(gdb, "CREATE (n:Person {id:'NewPerson'})");
+    TEST_ASSERT_NOT_NULL(res);
+    TEST_ASSERT_EQUAL_INT(0, res->row_count);
+    free_cypher_result(res);
+    res = execute_cypher(gdb, "MATCH (n:Person) WHERE n.id = 'NewPerson' RETURN n.id, n.label");
+    TEST_ASSERT_NOT_NULL(res);
+    TEST_ASSERT_EQUAL_INT(2, res->column_count);
+    TEST_ASSERT_EQUAL_INT(1, res->row_count);
+    TEST_ASSERT_EQUAL_STRING("NewPerson", res->rows[0][0]);
+    TEST_ASSERT_EQUAL_STRING("Person", res->rows[0][1]);
+    free_cypher_result(res);
+}
+
+void test_create_edge(void) {
+    CypherResult* res = execute_cypher(gdb, "CREATE (a:Person {id:'P1'})-[:KNOWS]->(b:Person {id:'P2'})");
+    TEST_ASSERT_NOT_NULL(res);
+    TEST_ASSERT_EQUAL_INT(0, res->row_count);
+    free_cypher_result(res);
+    res = execute_cypher(gdb, "MATCH (a)-[:KNOWS]->(b) WHERE a.id = 'P1' RETURN b.id");
+    TEST_ASSERT_NOT_NULL(res);
+    TEST_ASSERT_EQUAL_INT(1, res->column_count);
+    TEST_ASSERT_EQUAL_INT(1, res->row_count);
+    TEST_ASSERT_EQUAL_STRING("P2", res->rows[0][0]);
+    free_cypher_result(res);
+}
+
+void test_delete_node(void) {
+    CypherResult* res = execute_cypher(gdb, "MATCH (a) WHERE a.id = 'Mark' DELETE a");
+    TEST_ASSERT_NOT_NULL(res);
+    TEST_ASSERT_EQUAL_INT(0, res->row_count);
+    free_cypher_result(res);
+    res = execute_cypher(gdb, "MATCH (a) WHERE a.id = 'Mark' RETURN a.id");
+    TEST_ASSERT_NOT_NULL(res);
+    TEST_ASSERT_EQUAL_INT(1, res->column_count);
+    TEST_ASSERT_EQUAL_INT(0, res->row_count);
+    free_cypher_result(res);
+}
+
+void test_delete_edge(void) {
+    CypherResult* res = execute_cypher(gdb, "MATCH (a)-[r:FRIEND]->(b) WHERE a.id = 'Mark' DELETE r");
+    TEST_ASSERT_NOT_NULL(res);
+    TEST_ASSERT_EQUAL_INT(0, res->row_count);
+    free_cypher_result(res);
+    res = execute_cypher(gdb, "MATCH (a)-[:FRIEND]->(b) WHERE a.id = 'Mark' RETURN b.id");
+    TEST_ASSERT_NOT_NULL(res);
+    TEST_ASSERT_EQUAL_INT(1, res->column_count);
+    TEST_ASSERT_EQUAL_INT(0, res->row_count);
+    free_cypher_result(res);
+}
+
 
 int main(void) {
     UNITY_BEGIN();
@@ -119,5 +170,9 @@ int main(void) {
     RUN_TEST(test_execute_cypher_no_results);
     RUN_TEST(test_execute_cypher_with_filter);
     RUN_TEST(test_execute_cypher_with_filter_and_return);
+    RUN_TEST(test_create_node);
+    RUN_TEST(test_create_edge);
+    RUN_TEST(test_delete_node);
+    RUN_TEST(test_delete_edge);
     return UNITY_END();
 } 
