@@ -168,6 +168,13 @@ All tests reside in `test/` and cover core graph primitives as well as the Cyphe
 
 The benchmark inserts random nodes & edges and continuously measures insertion throughput using multiple threads.
 
+Results on a **MacBook Pro M1 Pro** (10-core CPU, 16-GB RAM):
+
+```text
+Time to insert 100000 nodes: 0.585501 seconds
+Time to insert 350000 edges: 2.513711 seconds
+```
+
 ---
 
 ## 8. Internals (very brief)
@@ -177,7 +184,6 @@ Key prefixes inside RocksDB:
 | Prefix | Record | Format |
 |--------|--------|--------|
 | `N`    | Node   | `N<node_id>` → *label* |
-| `L`    | Label  | `L<label>:<node_id>` → `""` (index) |
 | `O`    | Edge   | `O<from>:<type>:<to>` → `""` |
 | `I`    | Edge (incoming) | `I<to>:<type>:<from>` → `""` |
 
