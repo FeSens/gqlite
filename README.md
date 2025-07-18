@@ -67,7 +67,7 @@ Artifacts:
 GQLite CLI - Enter Cypher queries (type 'exit' to quit)
 > CREATE (n:Person {id:'Mark'})
 > CREATE (m:Person {id:'Alex'})
-> CREATE (n)-[:FRIEND]->(m)
+> CREATE (n:Person {id:'Mark'})-[:FRIEND]->(m:Person {id:'Alex'})
 > MATCH (n)-[:FRIEND]->(m) WHERE n.id='Mark' RETURN m.id, m.label
 m.id | m.label
 Alex | Person
