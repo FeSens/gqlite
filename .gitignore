@@ -1,6 +1,12 @@
 benchmarkdb/
 graphdb/
+testdb/
 *.o
 graph
 benchmark
 .DS_Store
+gqlite_cli
+test/test_graphdb
+test/test_cypher_parser
+testdb_temp/
+test/*.o

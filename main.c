@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "cypher_parser.h"
 
 // Example usage
 int main() {
@@ -15,12 +16,13 @@ int main() {
     graphdb_add_node(gdb, "node5", "Person");
 
 
-    graphdb_add_edge(gdb, "node1", "node2", "FRIEND");
+    graphdb_add_edge(gdb, "node1", "node2", "FRIEND");  
+    graphdb_add_edge(gdb, "node1", "node3", "FRIEND");
+    graphdb_add_edge(gdb, "node1", "node4", "PARENT");
+
     graphdb_add_edge(gdb, "node2", "node3", "FRIEND");
     graphdb_add_edge(gdb, "node3", "node4", "FRIEND");
     graphdb_add_edge(gdb, "node4", "node5", "FRIEND");
-
-    graphdb_add_edge(gdb, "node1", "node3", "FRIEND");
 
     int count;
     char** neighbors = graphdb_get_outgoing(gdb, "node1", "FRIEND", &count);
@@ -54,7 +56,9 @@ int main() {
     }
 
     // Basic Cypher example
-    graphdb_execute_basic_cypher(gdb, "MATCH (a)-[:FRIEND]->(b) WHERE a.id = 'node1' RETURN b.id");
+    CypherResult* res = execute_cypher(gdb, "MATCH (a)-[:FRIEND]->(b) WHERE a.id = 'node1' RETURN b.id");
+    print_cypher_result(res);
+    free_cypher_result(res);
 
     // Delete edge example
     graphdb_delete_edge(gdb, "node1", "node3", "FRIEND");

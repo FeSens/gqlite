@@ -19,9 +19,10 @@ void graphdb_add_edge(GraphDB* gdb, const char* from, const char* to, const char
 char** graphdb_get_outgoing(GraphDB* gdb, const char* node, const char* type, int* count);
 char** graphdb_get_incoming(GraphDB* gdb, const char* node, const char* type, int* count);
 char* graphdb_get_node_label(GraphDB* gdb, const char* node_id);
+char** graphdb_get_nodes_by_label(GraphDB* gdb, const char* label, int* count);
+char** graphdb_get_all_nodes(GraphDB* gdb, int* count);
 void graphdb_delete_node(GraphDB* gdb, const char* node_id);
 void graphdb_delete_edge(GraphDB* gdb, const char* from, const char* to, const char* type);
-void graphdb_execute_basic_cypher(GraphDB* gdb, const char* query);
 void find_shortest_path(GraphDB* gdb, const char* start, const char* end, const char* type);
 
 #endif 

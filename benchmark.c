@@ -10,8 +10,8 @@ int main() {
     GraphDB* gdb = graphdb_open("./benchmarkdb");
     if (!gdb) return 1;
 
-    const int NUM_NODES = 1000000;
-    const int NUM_EDGES = 3500000;
+    const int NUM_NODES = 100000;
+    const int NUM_EDGES = 350000;
     const char* EDGE_TYPE = "FRIEND";
 
     // Benchmark node inserts
