@@ -19,26 +19,7 @@
 // char** graphdb_get_outgoing(GraphDB* gdb, const char* node, const char* type, int* count);
 // etc.
 
-// Basic structure for query results
-// typedef struct {
-//     char** columns;
-//     int column_count;
-//     char*** rows;
-//     int row_count;
-// } CypherResult;
-
-void free_cypher_result(CypherResult* result) {
-    if (result) {
-        for (int i = 0; i < result->column_count; i++) free(result->columns[i]);
-        free(result->columns);
-        for (int i = 0; i < result->row_count; i++) {
-            for (int j = 0; j < result->column_count; j++) free(result->rows[i][j]);
-            free(result->rows[i]);
-        }
-        free(result->rows);
-        free(result);
-    }
-}
+// Legacy tabular result support removed – we now operate with structured results only.
 
 // Extended parser structures
 typedef struct {
@@ -710,11 +691,7 @@ static int compare_paths_last(const void* a, const void* b) {
 }
 
 static CypherResult* execute_parsed_query(GraphDB* gdb, ParsedQuery* pq) {
-    CypherResult* result = malloc(sizeof(CypherResult));
-    result->column_count = 0;
-    result->columns = NULL;
-    result->row_count = 0;
-    result->rows = NULL;
+    CypherResult* result = (CypherResult*)calloc(1, sizeof(CypherResult));
 
     if (pq->type == Q_CREATE) {
         if (!pq->match) return result;
@@ -840,148 +817,71 @@ static CypherResult* execute_parsed_query(GraphDB* gdb, ParsedQuery* pq) {
             }
         }
     } else if (pq->type == Q_MATCH_RETURN) {
-        result->column_count = pq->return_count;
-        result->columns = malloc(sizeof(char*) * result->column_count);
-        for (int c = 0; c < result->column_count; c++) {
-            result->columns[c] = strdup(pq->returns[c]);
-        }
         for (int p = 0; p < num_paths; p++) {
             MatchingPath* mp = paths[p];
-            bool match = true;
-            for (int cond = 0; cond < pq->cond_count; cond++) {
+
+            bool match_ok = true;
+            // Evaluate WHERE conditions (same logic as before but without column structs)
+            for (int cond = 0; cond < pq->cond_count && match_ok; cond++) {
                 WhereCondition* wc = &pq->conditions[cond];
                 int hop_idx = -1;
                 bool is_rel_cond = false;
                 for (int h = 0; h < pq->match->count; h++) {
-                    if (pq->match->nodes[h].var && strcmp(pq->match->nodes[h].var, wc->var) == 0) {
-                        hop_idx = h;
-                        break;
-                    }
+                    if (pq->match->nodes[h].var && strcmp(pq->match->nodes[h].var, wc->var) == 0) { hop_idx = h; break; }
                 }
                 if (hop_idx == -1) {
                     for (int r = 0; r < pq->match->count - 1; r++) {
-                        if (pq->match->rels[r].var && strcmp(pq->match->rels[r].var, wc->var) == 0) {
-                            hop_idx = r;
-                            is_rel_cond = true;
-                            break;
-                        }
+                        if (pq->match->rels[r].var && strcmp(pq->match->rels[r].var, wc->var) == 0) { hop_idx = r; is_rel_cond = true; break; }
                     }
                 }
-                if (hop_idx != -1) {
-                    char* check_val = NULL;
-                    if (is_rel_cond) {
-                        char* rel_type = mp->rel_types[hop_idx];
-                        if (strcmp(wc->prop, "type") == 0) check_val = strdup(rel_type ? rel_type : "");
-                    } else {
-                        int pos = mp->pattern_pos[hop_idx];
-                        char* node_id = mp->node_ids[pos];
-                        if (strcmp(wc->prop, "id") == 0) check_val = strdup(node_id);
-                        else if (strcmp(wc->prop, "label") == 0) check_val = graphdb_get_node_label(gdb, node_id);
-                    }
-                    if (check_val && strcmp(check_val, wc->val) != 0) match = false;
-                    free(check_val);
+                if (hop_idx == -1) { match_ok = false; break; }
+
+                char* check_val = NULL;
+                if (is_rel_cond) {
+                    char* rel_type = mp->rel_types[hop_idx];
+                    if (strcmp(wc->prop, "type") == 0) check_val = strdup(rel_type ? rel_type : "");
                 } else {
-                    match = false;
+                    int pos = mp->pattern_pos[hop_idx];
+                    char* node_id = mp->node_ids[pos];
+                    if (strcmp(wc->prop, "id") == 0) check_val = strdup(node_id);
+                    else if (strcmp(wc->prop, "label") == 0) check_val = graphdb_get_node_label(gdb, node_id);
                 }
-                if (!match) break;
+                if (!check_val || strcmp(check_val, wc->val) != 0) match_ok = false;
+                free(check_val);
             }
-            if (!match) continue;
-            char** temp_row = malloc(result->column_count * sizeof(char*));
-            for (int c = 0; c < result->column_count; c++) {
-                char* col = pq->returns[c];
-                char* value = NULL;
-                if (pq->match->path_var && strcmp(col, pq->match->path_var) == 0) {
-                    size_t buf_size = 1024;
-                    char* path_str = malloc(buf_size);
-                    path_str[0] = '\0';
-                    size_t len = 0;
-                    for (int h = 0; h < mp->num_nodes; h++) {
-                        char* label = graphdb_get_node_label(gdb, mp->node_ids[h]);
-                        len += snprintf(path_str + len, buf_size - len, "(%s:%s)", mp->node_ids[h], label ? label : "");
-                        free(label);
-                        if (len >= buf_size) {
-                            buf_size *= 2;
-                            path_str = realloc(path_str, buf_size);
-                        }
-                        if (h < mp->num_nodes - 1) {
-                            char* rel_type = mp->rel_types[h];
-                            RelPattern* rp = (h < pq->match->count - 1) ? &pq->match->rels[h] : &pq->match->rels[0];
-                            char* dir_str = (rp->direction == '>') ? "->" : (rp->direction == '<') ? "<-" : "-";
-                            len += snprintf(path_str + len, buf_size - len, "-[:%s]%s", rel_type ? rel_type : "", dir_str);
-                            if (len >= buf_size) {
-                                buf_size *= 2;
-                                path_str = realloc(path_str, buf_size);
-                            }
-                        }
-                    }
-                    value = path_str;
-                } else {
-                    char* dot = strchr(col, '.');
-                    char* var = dot ? strndup(col, dot - col) : strdup(col);
-                    char* prop = dot ? strdup(dot + 1) : NULL;
-                    int is_rel = 0;
-                    int idx = -1;
-                    for (int h = 0; h < pq->match->count; h++) {
-                        if (pq->match->nodes[h].var && strcmp(pq->match->nodes[h].var, var) == 0) {
-                            idx = h;
-                            break;
-                        }
-                    }
-                    if (idx == -1) {
-                        for (int r = 0; r < pq->match->count - 1; r++) {
-                            if (pq->match->rels[r].var && strcmp(pq->match->rels[r].var, var) == 0) {
-                                idx = r;
-                                is_rel = 1;
-                                break;
-                            }
-                        }
-                    }
-                    if (idx != -1) {
-                        if (is_rel) {
-                            char* rel_type = mp->rel_types[idx];
-                            if (prop && strcmp(prop, "type") == 0) value = strdup(rel_type ? rel_type : "");
-                            else value = strdup("");
-                        } else {
-                            int pos = mp->pattern_pos[idx];
-                            char* node_id = mp->node_ids[pos];
-                            if (prop && strcmp(prop, "id") == 0) value = strdup(node_id);
-                            else if (prop && strcmp(prop, "label") == 0) {
-                                char* lbl = graphdb_get_node_label(gdb, node_id);
-                                value = lbl ? lbl : strdup("");
-                            } else {
-                                value = strdup(node_id);
-                            }
-                        }
-                    } else {
-                        value = strdup("");
-                    }
-                    free(var);
-                    if (prop) free(prop);
-                }
-                temp_row[c] = value;
-            }
-            bool seen = false;
-            for (int r = 0; r < result->row_count; r++) {
-                bool same = true;
-                for (int c = 0; c < result->column_count; c++) {
-                    if (strcmp(result->rows[r][c], temp_row[c]) != 0) {
-                        same = false;
+            if (!match_ok) continue;
+
+            // Build structured row
+            CypherRowResult row = {0};
+            row.node_count = mp->num_nodes;
+            row.nodes = (CypherNodeResult*)calloc(row.node_count, sizeof(CypherNodeResult));
+            for (int i = 0; i < row.node_count; i++) {
+                row.nodes[i].id = strdup(mp->node_ids[i]);
+                row.nodes[i].label = graphdb_get_node_label(gdb, mp->node_ids[i]);
+                // We can try to map var name if pattern_pos matches
+                for (int pat = 0; pat < pq->match->count; pat++) {
+                    if (mp->pattern_pos[pat] == i && pq->match->nodes[pat].var) {
+                        row.nodes[i].var = strdup(pq->match->nodes[pat].var);
                         break;
                     }
                 }
-                if (same) {
-                    seen = true;
-                    break;
+            }
+
+            row.edge_count = mp->num_rels;
+            row.edges = (CypherEdgeResult*)calloc(row.edge_count, sizeof(CypherEdgeResult));
+            for (int i = 0; i < row.edge_count; i++) {
+                row.edges[i].from_id = strdup(mp->node_ids[i]);
+                row.edges[i].to_id = strdup(mp->node_ids[i+1]);
+                row.edges[i].type = strdup(mp->rel_types[i] ? mp->rel_types[i] : "");
+                // var name mapping - safe for variable length
+                if (i < pq->match->count - 1 && pq->match->rels[i].var) {
+                    row.edges[i].var = strdup(pq->match->rels[i].var);
                 }
             }
-            if (!seen) {
-                result->row_count++;
-                result->rows = realloc(result->rows, sizeof(char**) * result->row_count);
-                result->rows[result->row_count - 1] = temp_row;
-            } else {
-                for (int c = 0; c < result->column_count; c++) free(temp_row[c]);
-                free(temp_row);
-            }
+
+            // Append to result
+            result->rows = (CypherRowResult*)realloc(result->rows, sizeof(CypherRowResult) * (result->row_count + 1));
+            result->rows[result->row_count++] = row;
         }
     }
 
@@ -999,23 +899,22 @@ static CypherResult* execute_parsed_query(GraphDB* gdb, ParsedQuery* pq) {
     return result;
 }
 
-// Function to print results in a Neo4j-like tabular format
-void print_cypher_result(CypherResult* result) {
+// Simple pretty-printer for the new structured result
+void print_cypher_result(const CypherResult* result) {
     if (!result || result->row_count == 0) {
         printf("No results\n");
         return;
     }
-    // Print headers
-    for (int i = 0; i < result->column_count; i++) {
-        printf("%s", result->columns[i]);
-        if (i < result->column_count - 1) printf(" | ");
-    }
-    printf("\n");
-    // Print rows
+
     for (int r = 0; r < result->row_count; r++) {
-        for (int c = 0; c < result->column_count; c++) {
-            printf("%s", result->rows[r][c]);
-            if (c < result->column_count - 1) printf(" | ");
+        const CypherRowResult* row = &result->rows[r];
+        for (int n = 0; n < row->node_count; n++) {
+            const CypherNodeResult* node = &row->nodes[n];
+            printf("(%s:%s)", node->id, node->label ? node->label : "");
+            if (n < row->edge_count) {
+                const CypherEdgeResult* edge = &row->edges[n];
+                printf("-[:%s]->", edge->type ? edge->type : "");
+            }
         }
         printf("\n");
     }
@@ -1024,12 +923,7 @@ void print_cypher_result(CypherResult* result) {
 CypherResult* execute_cypher(GraphDB* gdb, const char* query) {
     ParsedQuery* pq = parse_cypher(query);
     if (!pq) {
-        CypherResult* result = malloc(sizeof(CypherResult));
-        result->column_count = 0;
-        result->columns = NULL;
-        result->row_count = 0;
-        result->rows = NULL;
-        return result;
+        return (CypherResult*)calloc(1, sizeof(CypherResult));
     }
     CypherResult* result = execute_parsed_query(gdb, pq);
     // Free pq
@@ -1073,16 +967,16 @@ CypherResult* execute_cypher(GraphDB* gdb, const char* query) {
  ***************************************/
 
 // Allocate an empty raw result helper
-static CypherRawResult* cypher_raw_result_create() {
-    CypherRawResult* res = (CypherRawResult*)calloc(1, sizeof(CypherRawResult));
+static CypherResult* cypher_result_create() {
+    CypherResult* res = (CypherResult*)calloc(1, sizeof(CypherResult));
     return res;
 }
 
-// Free raw result helper (public via header)
-void free_cypher_raw_result(CypherRawResult* result) {
+// Free result helper (public via header)
+void free_cypher_result(CypherResult* result) {
     if (!result) return;
     for (int r = 0; r < result->row_count; r++) {
-        CypherRawRow* row = &result->rows[r];
+        CypherRowResult* row = &result->rows[r];
         for (int n = 0; n < row->node_count; n++) {
             free(row->nodes[n].var);
             free(row->nodes[n].id);
@@ -1099,84 +993,4 @@ void free_cypher_raw_result(CypherRawResult* result) {
     }
     free(result->rows);
     free(result);
-}
-
-/*
- * Placeholder implementation: For now, execute_cypher_raw simply delegates to
- * the existing execute_cypher function to preserve behaviour while we migrate
- * the internals. It then converts the tabular representation into a raw
- * result that only contains node ids (label information is fetched lazily).
- *
- * This keeps the public contract intact and allows callers to start using the
- * structured API today. We can incrementally move the heavy lifting to a true
- * structured executor without changing the interface further.
- */
-CypherRawResult* execute_cypher_raw(GraphDB* gdb, const char* query) {
-    // For the initial migration path we reuse the legacy executor and build a
-    // minimal raw representation out of its output.
-    CypherResult* legacy = execute_cypher(gdb, query);
-    if (!legacy) return NULL;
-
-    CypherRawResult* raw = cypher_raw_result_create();
-    raw->row_count = legacy->row_count;
-    raw->rows = (CypherRawRow*)calloc(raw->row_count, sizeof(CypherRawRow));
-
-    // Very naive conversion: each column that looks like "<var>.id" or
-    // "<var>.label" populates a node entry. Relationship columns are not yet
-    // supported during the first migration step.
-    for (int r = 0; r < legacy->row_count; r++) {
-        CypherRawRow* row = &raw->rows[r];
-        // We might have duplicates for the same var, so we track them.
-        for (int c = 0; c < legacy->column_count; c++) {
-            const char* col = legacy->columns[c];
-            const char* dot = strchr(col, '.');
-            if (!dot) continue;
-            size_t var_len = dot - col;
-            const char* prop = dot + 1;
-            char* var = strndup(col, var_len);
-            // Look up if we already have this var in nodes
-            int idx = -1;
-            for (int n = 0; n < row->node_count; n++) {
-                if (row->nodes[n].var && strcmp(row->nodes[n].var, var) == 0) {
-                    idx = n;
-                    break;
-                }
-            }
-            if (idx == -1) {
-                row->nodes = (CypherNodeResult*)realloc(row->nodes, sizeof(CypherNodeResult) * (row->node_count + 1));
-                idx = row->node_count;
-                row->nodes[idx].var = strdup(var);
-                row->nodes[idx].id = NULL;
-                row->nodes[idx].label = NULL;
-                row->node_count++;
-            }
-            // Assign property
-            if (strcmp(prop, "id") == 0) {
-                free(row->nodes[idx].id);
-                row->nodes[idx].id = strdup(legacy->rows[r][c]);
-            } else if (strcmp(prop, "label") == 0) {
-                free(row->nodes[idx].label);
-                row->nodes[idx].label = strdup(legacy->rows[r][c]);
-            }
-            free(var);
-        }
-    }
-
-    // Clean up legacy result
-    free_cypher_result(legacy);
-
-    return raw;
-}
-
-/*
- * Convert the structured result into the legacy tabular format that existing
- * callers (CLI, tests) rely on.
- */
-CypherResult* cypher_raw_to_table(GraphDB* gdb, const CypherRawResult* raw, const char* query) {
-    if (!raw) return NULL;
-
-    // For a first step we mimic the old behaviour by delegating back to the
-    // legacy executor. Eventually this function will inspect `raw` and the
-    // parsed query to build the table without executing the query twice.
-    return execute_cypher(gdb, query);
 }
