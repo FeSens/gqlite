@@ -78,11 +78,11 @@ void queue_destroy(Queue* q) {
 // Cache for prefetched neighbors
 typedef struct {
     char* node;
-    char** neighbors;
+    Neighbor* neighbors;
     int count;
 } CacheEntry;
 
-void add_to_cache(CacheEntry** cache, int* count, const char* node, char** neighbors, int neigh_count, pthread_mutex_t* mutex) {
+void add_to_cache(CacheEntry** cache, int* count, const char* node, Neighbor* neighbors, int neigh_count, pthread_mutex_t* mutex) {
     pthread_mutex_lock(mutex);
     *cache = (CacheEntry*)realloc(*cache, sizeof(CacheEntry) * (*count + 1));
     (*cache)[*count].node = strdup(node);
@@ -92,11 +92,11 @@ void add_to_cache(CacheEntry** cache, int* count, const char* node, char** neigh
     pthread_mutex_unlock(mutex);
 }
 
-char** get_from_cache(CacheEntry** cache, int* count, const char* node, int* neigh_count, pthread_mutex_t* mutex) {
+Neighbor* get_from_cache(CacheEntry** cache, int* count, const char* node, int* neigh_count, pthread_mutex_t* mutex) {
     pthread_mutex_lock(mutex);
     for (int i = 0; i < *count; i++) {
         if (strcmp((*cache)[i].node, node) == 0) {
-            char** neighbors = (*cache)[i].neighbors;
+            Neighbor* neighbors = (*cache)[i].neighbors;
             *neigh_count = (*cache)[i].count;
             free((*cache)[i].node);
             memmove(&(*cache)[i], &(*cache)[i + 1], sizeof(CacheEntry) * (*count - i - 1));
@@ -131,7 +131,7 @@ void* prefetch_thread(void* arg) {
         sprintf(prefix, "O%s:%s:", node, pa->type);
         rocksdb_iterator_t* it = rocksdb_create_iterator(pa->db, pa->readoptions);
         rocksdb_iter_seek(it, prefix, prefix_len);
-        char** neighbors = NULL;
+        Neighbor* neighbors = NULL;
         int neigh_count = 0;
         while (rocksdb_iter_valid(it)) {
             size_t klen;
@@ -142,8 +142,12 @@ void* prefetch_thread(void* arg) {
             char* to = (char*)malloc(to_len + 1);
             memcpy(to, to_start, to_len);
             to[to_len] = '\0';
-            neighbors = (char**)realloc(neighbors, sizeof(char*) * (neigh_count + 1));
-            neighbors[neigh_count++] = to;
+            Neighbor neigh;
+            neigh.id = to;
+            neigh.type = strdup(pa->type);
+            neighbors = (Neighbor*)realloc(neighbors, sizeof(Neighbor) * (neigh_count + 1));
+            neighbors[neigh_count] = neigh;
+            neigh_count++;
             rocksdb_iter_next(it);
         }
         rocksdb_iter_destroy(it);
@@ -257,29 +261,55 @@ void graphdb_add_edge(GraphDB* gdb, const char* from, const char* to, const char
     free(i_key);
 }
 
-char** graphdb_get_outgoing(GraphDB* gdb, const char* node, const char* type, int* count) {
+Neighbor* graphdb_get_outgoing(GraphDB* gdb, const char* node, const char* type, int* count) {
     if (!gdb) {
         *count = 0;
         return NULL;
     }
-    size_t prefix_len = 1 + strlen(node) + 1 + strlen(type) + 1; // Adjusted for shorter prefix
-    char* prefix = (char*)malloc(prefix_len + 1);
-    sprintf(prefix, "O%s:%s:", node, type);
+    size_t prefix_len;
+    char* prefix;
+    if (type && strlen(type) > 0) {
+        prefix_len = 1 + strlen(node) + 1 + strlen(type) + 1;
+        prefix = (char*)malloc(prefix_len + 1);
+        sprintf(prefix, "O%s:%s:", node, type);
+    } else {
+        prefix_len = 1 + strlen(node) + 1;
+        prefix = (char*)malloc(prefix_len + 1);
+        sprintf(prefix, "O%s:", node);
+    }
     rocksdb_iterator_t* it = rocksdb_create_iterator(gdb->db, gdb->readoptions);
     rocksdb_iter_seek(it, prefix, prefix_len);
-    char** neighbors = NULL;
+    Neighbor* neighbors = NULL;
     *count = 0;
     while (rocksdb_iter_valid(it)) {
         size_t klen;
         const char* key = rocksdb_iter_key(it, &klen);
         if (klen <= prefix_len || memcmp(key, prefix, prefix_len) != 0) break;
-        const char* to_start = key + prefix_len;
-        size_t to_len = klen - prefix_len;
-        char* to = (char*)malloc(to_len + 1);
-        memcpy(to, to_start, to_len);
-        to[to_len] = '\0';
-        neighbors = (char**)realloc(neighbors, sizeof(char*) * (*count + 1));
-        neighbors[*count] = to;
+        char* extracted_type = NULL;
+        const char* id_start = key + prefix_len;
+        size_t id_len = klen - prefix_len;
+        if (type && strlen(type) > 0) {
+            extracted_type = strdup(type);
+        } else {
+            const char* type_start = key + prefix_len;
+            const char* colon = memchr(type_start, ':', klen - prefix_len);
+            if (!colon) {
+                rocksdb_iter_next(it);
+                continue;
+            }
+            size_t type_len = colon - type_start;
+            extracted_type = (char*)malloc(type_len + 1);
+            memcpy(extracted_type, type_start, type_len);
+            extracted_type[type_len] = '\0';
+            id_start = colon + 1;
+            id_len = klen - (id_start - key);
+        }
+        char* id = (char*)malloc(id_len + 1);
+        memcpy(id, id_start, id_len);
+        id[id_len] = '\0';
+        neighbors = (Neighbor*)realloc(neighbors, sizeof(Neighbor) * (*count + 1));
+        neighbors[*count].id = id;
+        neighbors[*count].type = extracted_type;
         (*count)++;
         rocksdb_iter_next(it);
     }
@@ -288,29 +318,55 @@ char** graphdb_get_outgoing(GraphDB* gdb, const char* node, const char* type, in
     return neighbors;
 }
 
-char** graphdb_get_incoming(GraphDB* gdb, const char* node, const char* type, int* count) {
+Neighbor* graphdb_get_incoming(GraphDB* gdb, const char* node, const char* type, int* count) {
     if (!gdb) {
         *count = 0;
         return NULL;
     }
-    size_t prefix_len = 1 + strlen(node) + 1 + strlen(type) + 1; // Adjusted
-    char* prefix = (char*)malloc(prefix_len + 1);
-    sprintf(prefix, "I%s:%s:", node, type);
+    size_t prefix_len;
+    char* prefix;
+    if (type && strlen(type) > 0) {
+        prefix_len = 1 + strlen(node) + 1 + strlen(type) + 1;
+        prefix = (char*)malloc(prefix_len + 1);
+        sprintf(prefix, "I%s:%s:", node, type);
+    } else {
+        prefix_len = 1 + strlen(node) + 1;
+        prefix = (char*)malloc(prefix_len + 1);
+        sprintf(prefix, "I%s:", node);
+    }
     rocksdb_iterator_t* it = rocksdb_create_iterator(gdb->db, gdb->readoptions);
     rocksdb_iter_seek(it, prefix, prefix_len);
-    char** neighbors = NULL;
+    Neighbor* neighbors = NULL;
     *count = 0;
     while (rocksdb_iter_valid(it)) {
         size_t klen;
         const char* key = rocksdb_iter_key(it, &klen);
         if (klen <= prefix_len || memcmp(key, prefix, prefix_len) != 0) break;
-        const char* from_start = key + prefix_len;
-        size_t from_len = klen - prefix_len;
-        char* from = (char*)malloc(from_len + 1);
-        memcpy(from, from_start, from_len);
-        from[from_len] = '\0';
-        neighbors = (char**)realloc(neighbors, sizeof(char*) * (*count + 1));
-        neighbors[*count] = from;
+        char* extracted_type = NULL;
+        const char* id_start = key + prefix_len;
+        size_t id_len = klen - prefix_len;
+        if (type && strlen(type) > 0) {
+            extracted_type = strdup(type);
+        } else {
+            const char* type_start = key + prefix_len;
+            const char* colon = memchr(type_start, ':', klen - prefix_len);
+            if (!colon) {
+                rocksdb_iter_next(it);
+                continue;
+            }
+            size_t type_len = colon - type_start;
+            extracted_type = (char*)malloc(type_len + 1);
+            memcpy(extracted_type, type_start, type_len);
+            extracted_type[type_len] = '\0';
+            id_start = colon + 1;
+            id_len = klen - (id_start - key);
+        }
+        char* id = (char*)malloc(id_len + 1);
+        memcpy(id, id_start, id_len);
+        id[id_len] = '\0';
+        neighbors = (Neighbor*)realloc(neighbors, sizeof(Neighbor) * (*count + 1));
+        neighbors[*count].id = id;
+        neighbors[*count].type = extracted_type;
         (*count)++;
         rocksdb_iter_next(it);
     }
@@ -540,12 +596,13 @@ void graphdb_execute_basic_cypher(GraphDB* gdb, const char* query) {
     char type[256] = {0};
     if (sscanf(query, "MATCH (a)-[:%[^]]]->(b) WHERE a.id = '%[^']' RETURN b.id", type, start) == 2) {
         int count;
-        char** neighbors = graphdb_get_outgoing(gdb, start, type, &count);
+        Neighbor* neighbors = graphdb_get_outgoing(gdb, start, type, &count);
         if (neighbors) {
             printf("Results for query: %s\n", query);
             for (int i = 0; i < count; i++) {
-                printf("b.id: %s\n", neighbors[i]);
-                free(neighbors[i]);
+                printf("b.id: %s\n", neighbors[i].id);
+                free(neighbors[i].id);
+                free(neighbors[i].type);
             }
             free(neighbors);
         } else {
@@ -611,13 +668,13 @@ void find_shortest_path(GraphDB* gdb, const char* start, const char* end, const 
             char* current = queue_dequeue(current_level);
 
             int count;
-            char** neighbors = get_from_cache(&cache, &cache_count, current, &count, &cache_mutex);
+            Neighbor* neighbors = get_from_cache(&cache, &cache_count, current, &count, &cache_mutex);
             if (neighbors == NULL) {
                 neighbors = graphdb_get_outgoing(gdb, current, type, &count);
             }
 
             for (int i = 0; i < count; i++) {
-                char* neigh = neighbors[i];
+                char* neigh = neighbors[i].id;
                 int is_visited = 0;
                 for (int j = 0; j < visited_count; j++) {
                     if (strcmp(visited[j], neigh) == 0) {
@@ -647,7 +704,10 @@ void find_shortest_path(GraphDB* gdb, const char* start, const char* end, const 
                         found = 1;
                     }
                 }
-                free(neigh);
+            }
+            for (int i = 0; i < count; i++) {
+                free(neighbors[i].id);
+                free(neighbors[i].type);
             }
             free(neighbors);
             free(current);
@@ -656,7 +716,6 @@ void find_shortest_path(GraphDB* gdb, const char* start, const char* end, const 
         Queue* temp = current_level;
         current_level = next_level;
         next_level = temp;
-        // Clear next_level for reuse
         while (!queue_empty(next_level)) {
             free(queue_dequeue(next_level));
         }
@@ -680,7 +739,8 @@ void find_shortest_path(GraphDB* gdb, const char* start, const char* end, const 
     for (int i = 0; i < cache_count; i++) {
         free(cache[i].node);
         for (int j = 0; j < cache[i].count; j++) {
-            free(cache[i].neighbors[j]);
+            free(cache[i].neighbors[j].id);
+            free(cache[i].neighbors[j].type);
         }
         free(cache[i].neighbors);
     }

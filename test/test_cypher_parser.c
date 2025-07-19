@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#include <stdbool.h>
 
 #define TEST_DB_PATH "./testdb_temp"
 
@@ -162,6 +163,112 @@ void test_delete_edge(void) {
     free_cypher_result(res);
 }
 
+void test_multi_hop_query(void) {
+    CypherResult* res = execute_cypher(gdb, "MATCH (a:Person)-[:FRIEND]->(b:Person)-[:FRIEND]->(c:Person) WHERE a.id = 'Mark' RETURN a.id, b.id, c.id");
+    TEST_ASSERT_NOT_NULL(res);
+    TEST_ASSERT_EQUAL_INT(3, res->column_count);
+    TEST_ASSERT_EQUAL_STRING("a.id", res->columns[0]);
+    TEST_ASSERT_EQUAL_STRING("b.id", res->columns[1]);
+    TEST_ASSERT_EQUAL_STRING("c.id", res->columns[2]);
+    TEST_ASSERT_EQUAL_INT(1, res->row_count);
+    TEST_ASSERT_EQUAL_STRING("Mark", res->rows[0][0]);
+    TEST_ASSERT_EQUAL_STRING("Alex", res->rows[0][1]);
+    TEST_ASSERT_EQUAL_STRING("Felipe", res->rows[0][2]);
+    free_cypher_result(res);
+}
+
+void test_multi_condition_where(void) {
+    CypherResult* res = execute_cypher(gdb, "MATCH (a)-[:FRIEND]->(b) WHERE a.id = 'Mark' AND b.id = 'Alex' RETURN a.id, b.id");
+    TEST_ASSERT_NOT_NULL(res);
+    TEST_ASSERT_EQUAL_INT(2, res->column_count);
+    TEST_ASSERT_EQUAL_STRING("a.id", res->columns[0]);
+    TEST_ASSERT_EQUAL_STRING("b.id", res->columns[1]);
+    TEST_ASSERT_EQUAL_INT(1, res->row_count);
+    TEST_ASSERT_EQUAL_STRING("Mark", res->rows[0][0]);
+    TEST_ASSERT_EQUAL_STRING("Alex", res->rows[0][1]);
+    free_cypher_result(res);
+}
+
+void test_variable_length_path(void) {
+    CypherResult* res = execute_cypher(gdb, "MATCH (a)-[*1..2]->(b) WHERE a.id = 'Mark' RETURN b.id");
+    TEST_ASSERT_NOT_NULL(res);
+    TEST_ASSERT_EQUAL_INT(1, res->column_count);
+    TEST_ASSERT_EQUAL_INT(2, res->row_count);
+    printf("Row count: %d\n", res->row_count);
+    for (int i = 0; i < res->row_count; i++) {
+        printf("Row %d: %s\n", i, res->rows[i][0]);
+    }
+    int found_alex = 0, found_felipe = 0;
+    for (int i = 0; i < res->row_count; i++) {
+        if (strcmp(res->rows[i][0], "Alex") == 0) found_alex = 1;
+        if (strcmp(res->rows[i][0], "Felipe") == 0) found_felipe = 1;
+    }
+    printf("Found Alex: %d\n", found_alex);
+    printf("Found Felipe: %d\n", found_felipe);
+    TEST_ASSERT_TRUE(found_alex && found_felipe);
+    free_cypher_result(res);
+}
+
+void test_return_path(void) {
+    CypherResult* res = execute_cypher(gdb, "MATCH p = (a)-[*1..2]->(b) WHERE a.id = 'Mark' RETURN p");
+    TEST_ASSERT_NOT_NULL(res);
+    TEST_ASSERT_EQUAL_INT(1, res->column_count);
+    TEST_ASSERT_EQUAL_STRING("p", res->columns[0]);
+    TEST_ASSERT_TRUE(res->row_count > 0);
+    // Check format like "(Mark)-[:FRIEND]->(Alex)"
+    printf("Row count: %d\n", res->row_count);
+    for (int i = 0; i < res->row_count; i++) {
+        printf("Row %d: %s\n", i, res->rows[i][0]);
+    }
+    bool found = false;
+    for (int i = 0; i < res->row_count; i++) {
+        if (strstr(res->rows[i][0], "(Mark:Person)") != NULL && strstr(res->rows[i][0], "->(Alex:Person)") != NULL) {
+            found = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(found);
+    free_cypher_result(res);
+}
+
+void test_match_all_nodes(void) {
+    CypherResult* res = execute_cypher(gdb, "MATCH (a) RETURN a.id, a.label");
+    TEST_ASSERT_NOT_NULL(res);
+    TEST_ASSERT_EQUAL_INT(2, res->column_count);
+    TEST_ASSERT_EQUAL_STRING("a.id", res->columns[0]);
+    TEST_ASSERT_EQUAL_STRING("a.label", res->columns[1]);
+    TEST_ASSERT_EQUAL_INT(4, res->row_count);
+    bool found_mark = false, found_alex = false, found_felipe = false, found_email = false;
+    for (int i = 0; i < res->row_count; i++) {
+        char* id = res->rows[i][0];
+        char* label = res->rows[i][1];
+        if (strcmp(id, "Mark") == 0 && strcmp(label, "Person") == 0) found_mark = true;
+        else if (strcmp(id, "Alex") == 0 && strcmp(label, "Person") == 0) found_alex = true;
+        else if (strcmp(id, "Felipe") == 0 && strcmp(label, "Person") == 0) found_felipe = true;
+        else if (strcmp(id, "research@felipebonetto.com") == 0 && strcmp(label, "Email") == 0) found_email = true;
+    }
+    TEST_ASSERT_TRUE(found_mark && found_alex && found_felipe && found_email);
+    free_cypher_result(res);
+}
+
+void test_match_any_rel(void) {
+    CypherResult* res = execute_cypher(gdb, "MATCH p = (a)-[:]->(b) WHERE a.id = 'Mark' RETURN p");
+    TEST_ASSERT_NOT_NULL(res);
+    TEST_ASSERT_EQUAL_INT(1, res->column_count);
+    TEST_ASSERT_EQUAL_STRING("p", res->columns[0]);
+    TEST_ASSERT_EQUAL_INT(2, res->row_count);
+    printf("Row count: %d\n", res->row_count);
+    for (int i = 0; i < res->row_count; i++) {
+        printf("Row %d: %s\n", i, res->rows[i][0]);
+    }
+    bool found_alex = false, found_felipe = false;
+    for (int i = 0; i < res->row_count; i++) {
+        if (strstr(res->rows[i][0], "(Mark:Person)-[:FRIEND]->(Alex:Person)") != NULL) found_alex = true;
+        if (strstr(res->rows[i][0], "(Mark:Person)-[:FRIEND]->(Felipe:Person)") != NULL) found_felipe = true;
+    }
+    TEST_ASSERT_TRUE(found_alex && found_felipe);
+    free_cypher_result(res);
+}
 
 int main(void) {
     UNITY_BEGIN();
@@ -174,5 +281,11 @@ int main(void) {
     RUN_TEST(test_create_edge);
     RUN_TEST(test_delete_node);
     RUN_TEST(test_delete_edge);
+    RUN_TEST(test_multi_hop_query);
+    RUN_TEST(test_multi_condition_where);
+    RUN_TEST(test_variable_length_path);
+    RUN_TEST(test_return_path);
+    RUN_TEST(test_match_all_nodes);
+    RUN_TEST(test_match_any_rel);
     return UNITY_END();
 } 

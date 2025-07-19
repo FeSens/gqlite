@@ -24,12 +24,26 @@ int main() {
     graphdb_add_edge(gdb, "node3", "node4", "FRIEND");
     graphdb_add_edge(gdb, "node4", "node5", "FRIEND");
 
+    graphdb_add_node(gdb, "Mark", "Person");
+    graphdb_add_node(gdb, "Alex", "Person");
+    graphdb_add_node(gdb, "Felipe", "Person");
+    graphdb_add_node(gdb, "research@felipebonetto.com", "Email");
+    graphdb_add_node(gdb, "Mark", "Person");
+    graphdb_add_edge(gdb, "Mark", "Alex", "FRIEND");
+    graphdb_add_edge(gdb, "Mark", "Felipe", "FRIEND");
+    graphdb_add_edge(gdb, "Alex", "Felipe", "FRIEND");
+    graphdb_add_edge(gdb, "Felipe", "Mark", "UNCLE");
+    graphdb_add_edge(gdb, "Felipe", "Alex", "COUSIN");
+    graphdb_add_edge(gdb, "Felipe", "research@felipebonetto.com", "CONTACT_INFO");
+
+
     int count;
-    char** neighbors = graphdb_get_outgoing(gdb, "node1", "FRIEND", &count);
+    Neighbor* neighbors = graphdb_get_outgoing(gdb, "node1", "FRIEND", &count);
     if (neighbors) {
         for (int i = 0; i < count; i++) {
-            printf("Neighbor: %s\n", neighbors[i]);
-            free(neighbors[i]);
+            printf("Neighbor: %s\n", neighbors[i].id);
+            free(neighbors[i].id);
+            free(neighbors[i].type);
         }
         free(neighbors);
     }
@@ -45,12 +59,13 @@ int main() {
     }
 
     int inc_count;
-    char** inc_neighbors = graphdb_get_incoming(gdb, "node3", "FRIEND", &inc_count);
+    Neighbor* inc_neighbors = graphdb_get_incoming(gdb, "node3", "FRIEND", &inc_count);
     if (inc_neighbors) {
         printf("Incoming to node3:\n");
         for (int i = 0; i < inc_count; i++) {
-            printf("%s\n", inc_neighbors[i]);
-            free(inc_neighbors[i]);
+            printf("Incoming: %s\n", inc_neighbors[i].id);
+            free(inc_neighbors[i].id);
+            free(inc_neighbors[i].type);
         }
         free(inc_neighbors);
     }

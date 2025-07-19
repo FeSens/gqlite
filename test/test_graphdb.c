@@ -62,10 +62,11 @@ void test_graphdb_add_edge(void) {
     graphdb_add_node(gdb, "node2", "Person");
     graphdb_add_edge(gdb, "node1", "node2", "FRIEND");
     int count;
-    char** neighbors = graphdb_get_outgoing(gdb, "node1", "FRIEND", &count);
+    Neighbor* neighbors = graphdb_get_outgoing(gdb, "node1", "FRIEND", &count);
     TEST_ASSERT_EQUAL_INT(1, count);
-    TEST_ASSERT_EQUAL_STRING("node2", neighbors[0]);
-    free(neighbors[0]);
+    TEST_ASSERT_EQUAL_STRING("node2", neighbors[0].id);
+    free(neighbors[0].id);
+    free(neighbors[0].type);
     free(neighbors);
 }
 
@@ -74,10 +75,11 @@ void test_graphdb_get_incoming(void) {
     graphdb_add_node(gdb, "node2", "Person");
     graphdb_add_edge(gdb, "node1", "node2", "FRIEND");
     int count;
-    char** incoming = graphdb_get_incoming(gdb, "node2", "FRIEND", &count);
+    Neighbor* incoming = graphdb_get_incoming(gdb, "node2", "FRIEND", &count);
     TEST_ASSERT_EQUAL_INT(1, count);
-    TEST_ASSERT_EQUAL_STRING("node1", incoming[0]);
-    free(incoming[0]);
+    TEST_ASSERT_EQUAL_STRING("node1", incoming[0].id);
+    free(incoming[0].id);
+    free(incoming[0].type);
     free(incoming);
 }
 
@@ -117,8 +119,9 @@ void test_graphdb_delete_node(void) {
     char* label = graphdb_get_node_label(gdb, "node1");
     TEST_ASSERT_NULL(label);
     int count;
-    char** incoming = graphdb_get_incoming(gdb, "node2", "FRIEND", &count);
+    Neighbor* incoming = graphdb_get_incoming(gdb, "node2", "FRIEND", &count);
     TEST_ASSERT_EQUAL_INT(0, count);
+    if (incoming) free(incoming);
 }
 
 void test_graphdb_delete_edge(void) {
@@ -127,8 +130,9 @@ void test_graphdb_delete_edge(void) {
     graphdb_add_edge(gdb, "node1", "node2", "FRIEND");
     graphdb_delete_edge(gdb, "node1", "node2", "FRIEND");
     int count;
-    char** neighbors = graphdb_get_outgoing(gdb, "node1", "FRIEND", &count);
+    Neighbor* neighbors = graphdb_get_outgoing(gdb, "node1", "FRIEND", &count);
     TEST_ASSERT_EQUAL_INT(0, count);
+    if (neighbors) free(neighbors);
 }
 
 void test_find_shortest_path(void) {

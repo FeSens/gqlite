@@ -12,12 +12,17 @@ typedef struct GraphDB {
     rocksdb_readoptions_t *readoptions;
 } GraphDB;
 
+typedef struct {
+  char* id;
+  char* type;
+} Neighbor;
+
 GraphDB* graphdb_open(const char* path);
 void graphdb_close(GraphDB* gdb);
 void graphdb_add_node(GraphDB* gdb, const char* node_id, const char* label);
 void graphdb_add_edge(GraphDB* gdb, const char* from, const char* to, const char* type);
-char** graphdb_get_outgoing(GraphDB* gdb, const char* node, const char* type, int* count);
-char** graphdb_get_incoming(GraphDB* gdb, const char* node, const char* type, int* count);
+Neighbor* graphdb_get_outgoing(GraphDB* gdb, const char* node, const char* type, int* count);
+Neighbor* graphdb_get_incoming(GraphDB* gdb, const char* node, const char* type, int* count);
 char* graphdb_get_node_label(GraphDB* gdb, const char* node_id);
 char** graphdb_get_nodes_by_label(GraphDB* gdb, const char* label, int* count);
 char** graphdb_get_all_nodes(GraphDB* gdb, int* count);
