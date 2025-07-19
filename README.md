@@ -1,7 +1,7 @@
 # GQLite – A Tiny Embedded Graph Database in C
 
 GQLite is an educational, *light-weight* graph database implemented in plain C on top of [RocksDB](https://github.com/facebook/rocksdb).  
-It supports a **minimal subset of Cypher** (Neo4j’s query language) and ships with a small CLI for experimentation, a public C API, and an automated test-suite.
+It supports a **minimal subset of Cypher** (Neo4j’s query language) and ships with a small CLI for experimentation, a public C API, an automated test-suite, and a Python-based web visualizer for querying and visualizing graphs.
 
 ---
 
@@ -12,12 +12,13 @@ It supports a **minimal subset of Cypher** (Neo4j’s query language) and ships 
 * Simple label & `id` properties per node
 * Sub-set of Cypher:
   * `CREATE` – create nodes and/or a single edge in one statement
-  * `MATCH`  – pattern matching on one hop (or single node) with optional `WHERE`
+  * `MATCH`  – pattern matching on multiple hops with optional `WHERE`
   * `DELETE` – delete nodes or one edge that was previously matched
   * `RETURN` – project any of  `var.id`, `var.label`, or `rel.type`
 * Thread-safe internal queues for neighbor pre-fetching
 * Portable Makefile (tested on macOS)
 * Unity-based unit tests
+* Python bindings and a Flask-based web visualizer for interactive querying and graph visualization using D3.js
 
 > ⚠️ This project is **not** intended for production but as a minimal, hackable playground for learning how graph stores work internally.
 
@@ -32,6 +33,8 @@ It supports a **minimal subset of Cypher** (Neo4j’s query language) and ships 
 | C compiler | build C code (C11) | `clang` (or `gcc`) | `build-essential` |
 | RocksDB    | storage engine | `brew install rocksdb` | `sudo apt install librocksdb-dev` |
 | pthreads   | threading | included | included |
+| Python 3   | web visualizer | `brew install python` | `sudo apt install python3` |
+| Flask      | web server | `pip install flask` | `pip install flask` |
 
 The Makefile assumes RocksDB headers live in one of:
 
@@ -49,7 +52,7 @@ make INCLUDES="-I/some/other/rocksdb/include" \
 
 ```bash
 # in the repository root
-make             # builds: lib objects, `graph`, `benchmark`, `gqlite_cli`
+make             # builds: lib objects, `graph`, `benchmark`, `gqlite_cli`, and shared library `libgqlite.so` for Python bindings
 ```
 
 Artifacts:
@@ -57,6 +60,7 @@ Artifacts:
 * `graph`        – tiny demo that hard-codes some graph logic (see `main.c`)
 * `benchmark`    – inserts random data & measures throughput
 * `gqlite_cli`   – interactive Cypher shell (see below)
+* `libgqlite.so` – shared library for Python integration
 
 ---
 
@@ -107,7 +111,7 @@ See `graphdb.h` & `cypher_parser.h` for the full API surface.
 
 ## 5. Cypher Grammar Supported
 
-GQLite intentionally supports only a **single hop** (one relationship) per pattern to stay tiny.
+GQLite supports multi-hop patterns for more complex graph traversals.
 
 ### 5.1 CREATE
 
@@ -131,6 +135,9 @@ MATCH (a:Person)-[:FRIEND]->(b:Person)
 
 -- Node-only query (no relationship)
 MATCH (n:Person) WHERE n.id='Alex' RETURN n.id, n.label
+
+-- Multi-hop query
+MATCH (a:Person)-[:FRIEND]->(b:Person)-[:FRIEND]->(c:Person) WHERE a.id='Mark' RETURN c.id, c.label
 ```
 
 ### 5.3 DELETE
@@ -145,8 +152,7 @@ MATCH (a)-[r:FRIEND]->(b) WHERE a.id='Mark' DELETE r
 
 > **Limitations**  
 > • Only `id` & `label` properties on nodes (no dynamic properties)  
-> • Single relationship per pattern  
-> • No multi-hop, `OPTIONAL MATCH`, `SET`, `MERGE`, transactions, etc.
+> • No `OPTIONAL MATCH`, `SET`, `MERGE`, transactions, etc.
 
 ---
 
@@ -177,7 +183,34 @@ Time to insert 350000 edges: 2.513711 seconds
 
 ---
 
-## 8. Internals (very brief)
+## 8. Running the Web Visualizer
+
+GQLite includes a simple web-based visualizer built with Flask and D3.js for running Cypher queries and visualizing the resulting graphs.
+
+### 8.1 Setup
+
+1. Ensure Python 3 and Flask are installed (see Dependencies above).
+2. Build the project to generate `libgqlite.so` (via `make`).
+
+### 8.2 Run the Server
+
+```bash
+python app.py
+```
+
+This starts a Flask server on `http://localhost:2999`. Open this URL in your browser.
+
+### 8.3 Usage
+
+* Enter a Cypher query in the input box at the top (e.g., `MATCH (a)-[:FRIEND]->(b) RETURN a,b`).
+* Click "Run" to execute the query and visualize the graph.
+* The graph is interactive: drag nodes, zoom, etc.
+
+Note: The web app uses `python_api.py` to interface with the GQLite shared library and assumes a database at `./graphdb` (configurable in `app.py`).
+
+---
+
+## 9. Internals (very brief)
 
 Key prefixes inside RocksDB:
 
@@ -191,7 +224,7 @@ This dual-write pattern (`O` for outgoing, `I` for incoming) allows O(1) neighbo
 
 ---
 
-## 9. Cleaning Up
+## 10. Cleaning Up
 
 ```bash
 make clean   # removes binaries & object files
@@ -199,6 +232,6 @@ make clean   # removes binaries & object files
 
 ---
 
-## 10. License
+## 11. License
 
 Licensed under the WTFPL license.  See `LICENSE` for details. 
