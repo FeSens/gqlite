@@ -51,3 +51,7 @@ test/unity/src/unity.o: test/unity/src/unity.c
 
 clean:
 	rm -f *.o graph benchmark gqlite_cli test/*.o test/test_graphdb test/test_cypher_parser test/unity/src/unity.o 
+
+# Build shared library for Python bindings
+libgqlite.so: graphdb.o cypher_parser.o
+	clang -shared -o libgqlite.so graphdb.o cypher_parser.o -L/opt/homebrew/opt/rocksdb/lib -lrocksdb 

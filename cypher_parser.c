@@ -998,63 +998,71 @@ void free_cypher_result(CypherResult* result) {
 // Simple JSON serializer for D3.js - produces { "nodes": [{ "id": "...", "label": "..." }], "links": [{ "source": "...", "target": "...", "type": "..." }] }
 // Merges all rows into one graph, deduplicating nodes by id.
 char* cypher_result_to_d3_json(const CypherResult* result) {
-    if (!result) return strdup("{ \"nodes\": [], \"links\": [] }");
+    if (!result || result->row_count == 0) return strdup("{ \"nodes\": [], \"links\": [] }");
 
-    // Collect unique nodes
+    // Collect unique nodes with hash set for dedup (simpler than loop)
+    // Note: For production, use a real hash table; this is naive
     char** unique_ids = NULL;
     char** unique_labels = NULL;
     int unique_count = 0;
 
-    // Collect links (no dedup for now)
     typedef struct { char* source; char* target; char* type; } Link;
     Link* links = NULL;
     int link_count = 0;
 
     for (int r = 0; r < result->row_count; r++) {
         const CypherRowResult* row = &result->rows[r];
+        if (!row) continue;
+
         for (int n = 0; n < row->node_count; n++) {
             const CypherNodeResult* node = &row->nodes[n];
+            if (!node || !node->id) continue;
+
             bool exists = false;
             for (int u = 0; u < unique_count; u++) {
                 if (strcmp(unique_ids[u], node->id) == 0) { exists = true; break; }
             }
-            if (!exists && node->id) {  // Skip if id is NULL
+            if (!exists) {
                 unique_ids = realloc(unique_ids, (unique_count + 1) * sizeof(char*));
                 unique_labels = realloc(unique_labels, (unique_count + 1) * sizeof(char*));
+                if (!unique_ids || !unique_labels) { /* Handle realloc failure */ return strdup("{ \"error\": \"Memory error\" }"); }
                 unique_ids[unique_count] = strdup(node->id);
                 unique_labels[unique_count] = strdup(node->label ? node->label : "");
                 unique_count++;
             }
         }
+
         for (int e = 0; e < row->edge_count; e++) {
             const CypherEdgeResult* edge = &row->edges[e];
-            if (edge->from_id && edge->to_id) {  // Skip invalid edges
-                links = realloc(links, (link_count + 1) * sizeof(Link));
-                links[link_count].source = strdup(edge->from_id);
-                links[link_count].target = strdup(edge->to_id);
-                links[link_count].type = strdup(edge->type ? edge->type : "");
-                link_count++;
-            }
+            if (!edge || !edge->from_id || !edge->to_id) continue;
+
+            links = realloc(links, (link_count + 1) * sizeof(Link));
+            if (!links) return strdup("{ \"error\": \"Memory error\" }");
+            links[link_count].source = strdup(edge->from_id);
+            links[link_count].target = strdup(edge->to_id);
+            links[link_count].type = strdup(edge->type ? edge->type : "");
+            link_count++;
         }
     }
 
-    // Build JSON string
-    size_t buf_size = 1024;
-    char* json = malloc(buf_size);
-    size_t len = snprintf(json, buf_size, "{ \"nodes\": ["); 
+    // Build JSON with dynamic buffer
+    char* json = NULL;
+    size_t len = 0;
+    FILE* stream = open_memstream(&json, &len);
+    if (!stream) return strdup("{ \"error\": \"Memory error\" }");
+
+    fprintf(stream, "{ \"nodes\": ["); 
     for (int u = 0; u < unique_count; u++) {
-        len += snprintf(json + len, buf_size - len, "{\"id\":\"%s\",\"label\":\"%s\"}", unique_ids[u], unique_labels[u]);
-        if (u < unique_count - 1) len += snprintf(json + len, buf_size - len, ",");
-        if (len >= buf_size - 100) { buf_size *= 2; json = realloc(json, buf_size); }
+        fprintf(stream, "{\"id\":\"%s\",\"label\":\"%s\"}", unique_ids[u], unique_labels[u]);
+        if (u < unique_count - 1) fprintf(stream, ",");
     }
-    len += snprintf(json + len, buf_size - len, "], \"links\": ["); 
+    fprintf(stream, "], \"links\": ["); 
     for (int l = 0; l < link_count; l++) {
-        len += snprintf(json + len, buf_size - len, "{\"source\":\"%s\",\"target\":\"%s\",\"type\":\"%s\"}", links[l].source, links[l].target, links[l].type);
-        if (l < link_count - 1) len += snprintf(json + len, buf_size - len, ",");
-        if (len >= buf_size - 100) { buf_size *= 2; json = realloc(json, buf_size); }
+        fprintf(stream, "{\"source\":\"%s\",\"target\":\"%s\",\"type\":\"%s\"}", links[l].source, links[l].target, links[l].type);
+        if (l < link_count - 1) fprintf(stream, ",");
     }
-    len += snprintf(json + len, buf_size - len, "] }");
-    json[len] = '\0';
+    fprintf(stream, "] }");
+    fclose(stream);  // Flushes to json
 
     // Cleanup
     for (int u = 0; u < unique_count; u++) { free(unique_ids[u]); free(unique_labels[u]); }
