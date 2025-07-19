@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>GQLite Visualizer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        #graph svg {
+            display: block; /* Remove bottom space */
+        }
+    </style>
+</head>
+<body class="bg-slate-900 font-sans antialiased flex flex-col h-screen">
+
+    <!-- Top Bar -->
+    <header class="bg-slate-800 border-b border-slate-700 p-3 shadow-sm z-10">
+        <div class="container mx-auto flex items-center gap-4">
+            <h1 class="text-xl font-bold text-slate-100 tracking-tight">GQLite</h1>
+            <div class="flex items-center flex-grow">
+                <textarea id="query" rows="1" class="flex-grow p-2 bg-slate-700 border border-slate-600 rounded-l-md focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-shadow text-slate-100 placeholder-slate-400 font-mono text-sm resize-none" placeholder="Enter Cypher query..."></textarea>
+                <button onclick="runQuery()" class="bg-indigo-600 text-white py-2 px-4 rounded-r-md hover:bg-indigo-700 active:bg-indigo-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-1 transition-colors flex items-center space-x-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clip-rule="evenodd" />
+                    </svg>
+                    <span class="font-semibold text-sm">Run</span>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="flex-grow relative">
+        <div id="graph-container" class="absolute inset-0">
+            <div id="graph" class="w-full h-full bg-slate-900">
+                <!-- D3 graph will be rendered here -->
+            </div>
+            <div id="loading" class="absolute inset-0 bg-slate-800 bg-opacity-75 flex items-center justify-center" style="display: none;">
+                <p class="text-slate-300 animate-pulse">Loading graph...</p>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        function runQuery() {
+            const query = document.getElementById('query').value;
+            const graphEl = document.getElementById('graph');
+            const loadingEl = document.getElementById('loading');
+
+            loadingEl.style.display = 'flex';
+            graphEl.innerHTML = ''; // Clear previous graph or error message
+
+            fetch('/query', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ query })
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                return response.json();
+            })
+            .then(graph => {
+                if (graph.nodes && graph.nodes.length > 0) {
+                    drawGraph(graph);
+                } else {
+                    graphEl.innerHTML = `<div class="p-4 text-center text-slate-400 h-full flex items-center justify-center">Query executed successfully, but the result is an empty graph.</div>`;
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                graphEl.innerHTML = `<div class="p-4 text-red-400 bg-red-900/20 rounded-lg m-4"><strong>Error:</strong> Failed to run query. Please check the console for details.</div>`;
+            })
+            .finally(() => {
+                loadingEl.style.display = 'none';
+            });
+        }
+
+        // Add Enter key listener (Shift+Enter for newline)
+        document.getElementById('query').addEventListener('keydown', function(event) {
+            if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                runQuery();
+            }
+        });
+
+        function drawGraph(graph) {
+            d3.select("#graph").html("");
+
+            const container = document.getElementById('graph');
+            const width = container.clientWidth;
+            const height = container.clientHeight;
+
+            // Deduplicate links with same source, target, and type
+            const uniqueLinksMap = new Set();
+            graph.links = graph.links.filter(l => {
+                const key = `${l.source}|${l.target}|${l.type}`;
+                if (uniqueLinksMap.has(key)) return false;
+                uniqueLinksMap.add(key);
+                return true;
+            });
+
+            const svg = d3.select("#graph")
+                .append("svg")
+                .attr("width", width)
+                .attr("height", height)
+                .attr("viewBox", `0 0 ${width} ${height}`)
+                .attr("preserveAspectRatio", "xMidYMid meet");
+
+            // Add arrowhead marker
+            svg.append("defs").append("marker")
+                .attr("id", "arrow")
+                .attr("viewBox", "0 -5 10 10")
+                .attr("refX", 10)
+                .attr("refY", 0)
+                .attr("markerWidth", 6)
+                .attr("markerHeight", 6)
+                .attr("orient", "auto")
+                .append("path")
+                .attr("d", "M0,-5L10,0L0,5")
+                .attr("fill", "#6b7280");
+
+            const g = svg.append("g");
+
+            // Pre-process links to detect parallel edges
+            (function preprocessLinks(links) {
+                const pairInfo = {};
+                links.forEach(l => {
+                    const src = typeof l.source === 'object' ? l.source.id : l.source;
+                    const tgt = typeof l.target === 'object' ? l.target.id : l.target;
+                    const key = src < tgt ? `${src}|${tgt}` : `${tgt}|${src}`;
+                    if (!pairInfo[key]) pairInfo[key] = 0;
+                    l.linkIndex = pairInfo[key]++;
+                });
+                links.forEach(l => {
+                    const src = typeof l.source === 'object' ? l.source.id : l.source;
+                    const tgt = typeof l.target === 'object' ? l.target.id : l.target;
+                    const key = src < tgt ? `${src}|${tgt}` : `${tgt}|${src}`;
+                    l.totalLinks = pairInfo[key];
+                });
+            })(graph.links);
+
+            // Initialize force simulation
+            const simulation = d3.forceSimulation(graph.nodes)
+                .force("link", d3.forceLink(graph.links).id(d => d.id).distance(150))
+                .force("charge", d3.forceManyBody().strength(-300))
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .force("collide", d3.forceCollide().radius(15));
+
+            const linkGroup = g.append("g");
+            const links = linkGroup
+                .selectAll("path")
+                .data(graph.links)
+                .enter().append("path")
+                .attr("fill", "none")
+                .attr("stroke", "#475569")
+                .attr("stroke-opacity", 0.7)
+                .attr("stroke-width", 1.5)
+                .attr("stroke-linecap", "round")
+                .attr("marker-end", "url(#arrow)");
+
+            const nodeGroup = g.append("g");
+            const nodes = nodeGroup
+                .selectAll("circle")
+                .data(graph.nodes)
+                .enter().append("circle")
+                .attr("r", 10)
+                .attr("fill", "#60a5fa")
+                .attr("stroke", "#1e293b")
+                .attr("stroke-width", 2)
+                .call(d3.drag()
+                    .on("start", dragstarted)
+                    .on("drag", dragged)
+                    .on("end", dragended));
+
+            const labels = nodeGroup
+                .selectAll("text")
+                .data(graph.nodes)
+                .enter().append("text")
+                .text(d => d.id)
+                .attr("dy", 4)
+                .attr("text-anchor", "middle")
+                .attr("fill", "#f1f5f9")
+                .attr("font-size", "12px")
+                .attr("paint-order", "stroke")
+                .attr("stroke", "rgba(15, 23, 42, 0.8)")
+                .attr("stroke-width", "0.5px");
+
+
+            const linkLabels = linkGroup
+                .selectAll("text")
+                .data(graph.links)
+                .enter().append("text")
+                .text(d => d.type || '')
+                .attr("font-size", "12px")
+                .attr("fill", "#94a3b8")
+                .attr("pointer-events", "none");
+
+            nodes.append("title").text(d => d.id);
+
+            simulation.on("tick", () => {
+                links.attr("d", d => {
+                    const nodeRadius = 12; // Node radius (10) + a small buffer for the arrow
+                    const dx = d.target.x - d.source.x;
+                    const dy = d.target.y - d.source.y;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+
+                    if (distance <= nodeRadius * 2) return ""; // Avoid drawing if nodes overlap
+
+                    // Calculate new endpoints for the link, shortened to avoid node overlap
+                    const sx = d.source.x + (dx / distance) * nodeRadius;
+                    const sy = d.source.y + (dy / distance) * nodeRadius;
+                    const tx = d.target.x - (dx / distance) * nodeRadius;
+                    const ty = d.target.y - (dy / distance) * nodeRadius;
+
+                    // If single edge between nodes, draw a straight line
+                    if (d.totalLinks === 1) {
+                        return `M${sx},${sy} L ${tx},${ty}`;
+                    }
+
+                    // For multiple edges, curve them
+                    const curved_dx = tx - sx;
+                    const curved_dy = ty - sy;
+                    const norm = Math.sqrt(curved_dx * curved_dx + curved_dy * curved_dy);
+                    if (norm === 0) return "";
+
+                    const baseSign = (d.linkIndex % 2 === 0) ? 1 : -1;
+                    const dirSign = (d.source.id < d.target.id) ? 1 : -1;
+                    const magnitude = Math.floor(d.linkIndex / 2) + 1;
+                    const offset = 40 * magnitude * baseSign * dirSign;
+
+                    const cx = (sx + tx) / 2 + offset * (curved_dy / norm);
+                    const cy = (sy + ty) / 2 - offset * (curved_dx / norm);
+                    return `M${sx},${sy} Q ${cx},${cy} ${tx},${ty}`;
+                });
+
+                nodes
+                    .attr("cx", d => d.x)
+                    .attr("cy", d => d.y);
+
+                labels
+                    .attr("x", d => d.x)
+                    .attr("y", d => d.y + 22);
+
+                linkLabels
+                    .attr("transform", d => {
+                        const nodeRadius = 12;
+                        const dx_orig = d.target.x - d.source.x;
+                        const dy_orig = d.target.y - d.source.y;
+                        const distance = Math.sqrt(dx_orig * dx_orig + dy_orig * dy_orig);
+                        if (distance <= nodeRadius * 2) return "translate(0,0)";
+
+                        const sx = d.source.x + (dx_orig / distance) * nodeRadius;
+                        const sy = d.source.y + (dy_orig / distance) * nodeRadius;
+                        const tx = d.target.x - (dx_orig / distance) * nodeRadius;
+                        const ty = d.target.y - (dy_orig / distance) * nodeRadius;
+                        
+                        const mx = (sx + tx) / 2;
+                        const my = (sy + ty) / 2;
+
+                        let lx = mx, ly = my;
+
+                        if (d.totalLinks > 1) {
+                            const curved_dx = tx - sx;
+                            const curved_dy = ty - sy;
+                            const norm = Math.sqrt(curved_dx * curved_dx + curved_dy * curved_dy) || 1;
+
+                            const baseSign = (d.linkIndex % 2 === 0) ? 1 : -1;
+                            const dirSign = (d.source.id < d.target.id) ? 1 : -1;
+                            const magnitude = Math.floor(d.linkIndex / 2) + 1;
+                            const offset = 20 * magnitude * baseSign * dirSign; // Use a smaller offset for labels
+
+                            lx = mx + offset * (curved_dy / norm);
+                            ly = my - offset * (curved_dx / norm);
+                        }
+                        
+                        let angle = Math.atan2(dy_orig, dx_orig) * 180 / Math.PI;
+                        if (angle > 90 || angle < -90) angle += 180;
+                        return `translate(${lx},${ly}) rotate(${angle})`;
+                    })
+                    .attr("dy", -2)
+                    .attr("text-anchor", "middle");
+            });
+
+            svg.call(d3.zoom()
+                .extent([[0, 0], [width, height]])
+                .scaleExtent([0.1, 8])
+                .on("zoom", ({transform}) => {
+                    g.attr("transform", transform);
+                }));
+
+            function dragstarted(event, d) {
+                if (!event.active) simulation.alphaTarget(0.3).restart();
+                d.fx = d.x;
+                d.fy = d.y;
+            }
+
+            function dragged(event, d) {
+                d.fx = event.x;
+                d.fy = event.y;
+            }
+
+            function dragended(event, d) {
+                if (!event.active) simulation.alphaTarget(0);
+                d.fx = null;
+                d.fy = null;
+            }
+        }
+    </script>
+</body>
+</html>
