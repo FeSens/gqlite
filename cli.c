@@ -3,11 +3,20 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdbool.h>
 
 #define BUFFER_SIZE 1024
 
 int main(int argc, char** argv) {
-    const char* db_path = (argc > 1) ? argv[1] : "./graphdb";
+    bool json_output = false;
+    const char* db_path = "./graphdb";
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--json") == 0) {
+            json_output = true;
+        } else {
+            db_path = argv[i];
+        }
+    }
     GraphDB* gdb = graphdb_open(db_path);
     if (!gdb) {
         fprintf(stderr, "Failed to open database at %s\n", db_path);
@@ -24,7 +33,13 @@ int main(int argc, char** argv) {
         if (strlen(buffer) == 0) continue;
 
         CypherResult* res = execute_cypher(gdb, buffer);
-        print_cypher_result(res);
+        if (json_output) {
+            char* json = cypher_result_to_d3_json(res);
+            printf("%s\n", json);
+            free_d3_json(json);
+        } else {
+            print_cypher_result(res);
+        }
         free_cypher_result(res);
     }
 

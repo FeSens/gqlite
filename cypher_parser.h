@@ -37,4 +37,8 @@ void free_cypher_result(CypherResult* result);
 // Convenience utility for CLI output
 void print_cypher_result(const CypherResult* result);
 
+// Convenience utility for D3.js integration
+char* cypher_result_to_d3_json(const CypherResult* result);
+void free_d3_json(char* json);
+
 #endif 
